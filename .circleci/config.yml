@@ -1,0 +1,129 @@
+version: 2
+jobs:
+  deploy-app:
+    docker:
+      - image: circleci/node:10.16.3
+    working_directory: ~/soloyoi-backend
+
+    steps:
+      - checkout
+      - setup_remote_docker
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "package.json" }}
+            - v1-dependencies-
+      - run: yarn
+      - save_cache:
+          paths:
+            - node_modules
+          key: v1-dependencies-{{ checksum "package.json" }}
+      - run:
+          name: Build Source
+          command: |
+            yarn run build
+      - run:
+          name: Install or Upgrade awscli v2
+          command: |
+            sudo apt-get -y update
+            sudo apt-get install -y git
+            git clone https://github.com/andrew-phan/awscliv2.git
+            sudo ./awscliv2/aws/install
+            sudo ln -sf /usr/local/bin/aws /usr/bin/
+            aws --version
+      - run:
+          name: Create AWS credentials manually
+          command: |
+            aws configure set aws_access_key_id "AKIAVS6K2LUCVIG3WA45"
+            aws configure set aws_secret_access_key "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"
+            aws configure set region "ap-northeast-1"
+      - run:
+          name: Install Docker client
+          command: |
+            set -x
+            VER="17.03.0-ce"
+            curl -L -o /tmp/docker-$VER.tgz https://download.docker.com/linux/static/stable/x86_64/docker-$VER.tgz
+            tar -xz -C /tmp -f /tmp/docker-$VER.tgz
+            sudo mv /tmp/docker/* /usr/bin
+            docker --version
+      - run:
+          name: Deploy to ECS
+          command: |
+            chmod 777 ./deploy/ecs-deploy
+            $(aws ecr get-login-password --region ap-northeast-1 | docker login --username AWS --password 384288054533.dkr.ecr.ap-northeast-1.amazonaws.com)
+
+  deploy-logstash:
+    docker:
+      - image: circleci/node:10.16.3
+    working_directory: ~/soloyoi-backend
+
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Install or Upgrade awscli v2
+          command: |
+            sudo apt-get -y update
+            sudo apt-get install -y git
+            git clone https://github.com/andrew-phan/awscliv2.git
+            sudo ./awscliv2/aws/install
+            sudo ln -sf /usr/local/bin/aws /usr/bin/
+            aws --version
+      - run:
+          name: Create AWS credentials manually
+          command: |
+            aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+            aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+            aws configure set region $AWS_ECS_REGION
+      - run:
+          name: Install Docker client
+          command: |
+            set -x
+            VER="17.03.0-ce"
+            curl -L -o /tmp/docker-$VER.tgz https://download.docker.com/linux/static/stable/x86_64/docker-$VER.tgz
+            tar -xz -C /tmp -f /tmp/docker-$VER.tgz
+            sudo mv /tmp/docker/* /usr/bin
+            docker --version
+      - run:
+          name: Deploy to ECS
+          command: |
+            chmod 777 ./deploy/ecs-deploy
+            $(aws ecr get-login-password --region ap-northeast-1 | docker login --username AWS --password 384288054533.dkr.ecr.ap-northeast-1.amazonaws.com)
+            
+workflows:
+  version: 2
+  deploy-develop:
+    jobs:
+      - deploy-logstash:
+          filters:
+            branches:
+              only:
+                - logstash_dev
+          context: dev-api-soloyoi
+  deploy-staging:
+    jobs:
+      - deploy-app:
+          filters:
+            branches:
+              only:
+                - staging
+          context: stg-api-soloyoi
+      - deploy-logstash:
+          filters:
+            branches:
+              only:
+                - logstash_stg
+          context: stg-api-soloyoi
+  deploy-production:
+    jobs:
+      - deploy-app:
+          filters:
+            branches:
+              only:
+                - master
+          context: prd-api-soloyoi
+      - deploy-logstash:
+          filters:
+            branches:
+              only:
+                - logstash_prd
+          context: prd-api-soloyoi
